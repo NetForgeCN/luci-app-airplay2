@@ -3,7 +3,9 @@ name: Build packages
 on:
   push:
     tags:
-      - v4.**
+      - v*
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -26,7 +28,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}-openwrt-24.10
           FEEDNAME: packages_ci
-          PACKAGES: luci-app-airplay2
+          PACKAGES: luci-app-airplay2 nqptp
           NO_REFRESH_CHECK: true
 
       - name: Upload artifacts
@@ -36,6 +38,7 @@ jobs:
           path: bin/packages/${{ matrix.arch }}/packages_ci/*.ipk
 
       - name: Upload packages
+        if: startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
         with:
           name: ${{ github.ref_name }}

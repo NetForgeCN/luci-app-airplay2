@@ -7,12 +7,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=airplay2
-PKG_VERSION:=4.3.7
+PKG_VERSION:=5.6.2
 PKG_RELEASE:=1
 
 PKG_SOURCE:=shairport-sync-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/mikebrady/shairport-sync/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=a1242d100b61fe1fffbbf706e919ed51d6a341c9fb8293fb42046e32ae2b3338
+PKG_HASH:=0747706e19a64ec550ec8a6a5c26bf8e231a4d032de31644f5a5daa0632c41c4
 
 PKG_MAINTAINER:=Ted Hess <thess@kitschensync.net>, \
 		Mike Brady <mikebrady@eircom.net>
@@ -20,6 +20,11 @@ PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=COPYING LICENSES shairport.c
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/shairport-sync-$(PKG_VERSION)
+
+# Shairport Sync 5.6.x uses Shared Memory Interface Version 11 ("smi11"), so the
+# nqptp companion daemon must be 1.2.9 or newer. The nqptp in the OpenWrt
+# packages feed is 1.2.4 ("smi10") and cannot be used with this version --
+# install the nqptp package shipped in this feed instead.
 
 PKG_FIXUP:=autoreconf
 PKG_INSTALL:=1
