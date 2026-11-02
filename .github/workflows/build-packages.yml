@@ -11,6 +11,9 @@ jobs:
   build:
     name: Build ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    permissions:
+      # needed by ncipollo/release-action when publishing a release on tags
+      contents: write
     strategy:
       fail-fast: false
       matrix:
