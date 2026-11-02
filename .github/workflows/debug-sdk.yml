@@ -14,34 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Locate SDK tree
+      - name: Inspect image layout
         run: |
           docker run --rm --entrypoint bash "ghcr.io/openwrt/sdk:x86_64-${{ inputs.sdk }}" -c '
-            echo "=== / ==="; ls /
-            echo "=== find feeds.conf.default ==="
-            find / -maxdepth 4 -name feeds.conf.default 2>/dev/null
-            echo "=== pwd ==="; pwd
+            echo "=== /entry.sh ==="; cat /entry.sh 2>/dev/null || echo "(none)"
+            echo "=== /start.sh ==="; cat /start.sh 2>/dev/null || echo "(none)"
+            echo "=== ls -la /builder ==="; ls -la /builder | head
+            echo "=== find feeds.conf (any depth) ==="
+            find / -name "feeds.conf*" 2>/dev/null | head
+            echo "=== find scripts/feeds ==="
+            find / -maxdepth 6 -path "*/scripts/feeds" 2>/dev/null | head
           '
-
-      - name: Inspect SDK
-        run: |
-          docker run --rm --entrypoint bash -v "$PWD:/feed" \
-            "ghcr.io/openwrt/sdk:x86_64-${{ inputs.sdk }}" -c '
-              SDK=$(find / -maxdepth 4 -name feeds.conf.default -printf "%h\n" 2>/dev/null | head -1)
-              echo "SDK dir: $SDK"
-              cd "$SDK" || exit 1
-              echo "src-link packages_ci /feed/" >> feeds.conf
-              ./scripts/feeds update -a >/dev/null 2>&1
-              ./scripts/feeds install -p packages_ci -f luci-app-airplay2
-              ./scripts/feeds install -p packages_ci -f airplay2
-              ./scripts/feeds install -p packages_ci -f nqptp
-              make defconfig
-              echo "=== .config selected ==="
-              grep -E "PACKAGE_(luci-app-airplay2|airplay2|nqptp)=" .config || echo "(none)"
-              echo "=== kconfig: luci-app-airplay2 ==="
-              grep -n -A14 "config PACKAGE_luci-app-airplay2$" tmp/.config-package.in || echo "(missing)"
-              echo "=== kconfig: airplay2 ==="
-              grep -n -A14 "config PACKAGE_airplay2$" tmp/.config-package.in || echo "(missing)"
-              echo "=== packagedeps entry ==="
-              grep -n -E "luci-app-airplay2" tmp/.packagedeps | head -5 || echo "(none)"
-            '
