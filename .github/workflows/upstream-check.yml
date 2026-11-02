@@ -1,0 +1,82 @@
+name: Upstream update check
+
+# 每天检查 shairport-sync / nqptp 是否有新版本，有就直接改 Makefile 并开 PR。
+# 只有真正有更新时才会提交；没有更新时什么都不做（也不会产生空提交）。
+
+on:
+  schedule:
+    - cron: "23 2 * * *" # 每天 02:23 UTC / 10:23 北京时间
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "只检查指定包（空格分隔，留空 = 全部）"
+        required: false
+        default: ""
+      dry_run:
+        description: "只检查、不提交"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "scripts/check_upstream.py"
+      - ".github/workflows/upstream-check.yml"
+
+permissions:
+  contents: write # 推 chore/upstream-bump 分支
+  pull-requests: write # 开 / 更新 PR
+  actions: write # 手动派发 build-packages.yml（GITHUB_TOKEN 推的分支不会自动触发 CI）
+
+concurrency:
+  group: upstream-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check upstream releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Look for new upstream releases
+        id: check
+        run: python3 scripts/check_upstream.py ${{ github.event.inputs.packages }}
+
+      - name: Show report
+        if: steps.check.outputs.changed == 'true'
+        run: cat upstream-report.md
+
+      - name: Open or update pull request
+        if: steps.check.outputs.changed == 'true' && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch="chore/upstream-bump"
+          title="$(head -n1 upstream-report.md | sed 's/^# //')"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B "$branch"
+          git add airplay2/Makefile nqptp/Makefile README.md
+          git commit -m "$title"
+          git push -f origin "$branch"
+
+          number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body-file upstream-report.md
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body-file upstream-report.md
+          fi
+
+      # GITHUB_TOKEN 创建的 push 不会触发其它工作流，所以编译验证要显式派发
+      - name: Trigger build on the bump branch
+        if: steps.check.outputs.changed == 'true' && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run build-packages.yml --ref chore/upstream-bump
