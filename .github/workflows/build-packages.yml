@@ -6,49 +6,103 @@ on:
       - v*
   pull_request:
   workflow_dispatch:
+    inputs:
+      arch:
+        description: "Limit to one architecture (empty = all)"
+        required: false
+        default: ""
 
 jobs:
   build:
-    name: Build ${{ matrix.arch }}
+    name: ${{ matrix.arch }} / ${{ matrix.sdk }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       # needed by ncipollo/release-action when publishing a release on tags
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        arch:
-          - aarch64_generic
-          - x86_64
+        include:
+          # OpenWrt master (snapshot SDK). This is the primary target: the
+          # packages follow the current development tree.
+          - arch: x86_64
+            sdk: SNAPSHOT
+            publish: true
+          - arch: aarch64_generic
+            sdk: SNAPSHOT
+            publish: true
 
     steps:
-      - uses: actions/checkout@main
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Building packages
-        uses: sbwml/openwrt-gh-action-sdk@main
-        env:
-          ARCH: ${{ matrix.arch }}-openwrt-24.10
-          FEEDNAME: packages_ci
-          PACKAGES: luci-app-airplay2 nqptp
-          NO_REFRESH_CHECK: true
-          # keep compiler/configure error output visible (the default discards
-          # stdout *and* stderr, which hides the reason a build failed)
-          V: s
+      - name: Build in SDK container
+        run: |
+          mkdir -p out && chmod 777 out
+          docker run --rm --entrypoint bash \
+            -v "$PWD:/feed" \
+            -v "$PWD/out:/out" \
+            -e "ARCH=${{ matrix.arch }}" \
+            "ghcr.io/openwrt/sdk:${{ matrix.arch }}-${{ matrix.sdk }}" -c '
+              set -eo pipefail
+              mkdir -p /out
+
+              # snapshot images ship without the SDK to save bandwidth
+              cd /builder
+              [ ! -f setup.sh ] || bash setup.sh
+              SDK=$(dirname $(find /builder -maxdepth 5 -path "*/scripts/feeds" -printf "%h\n" | head -1))
+              echo "SDK root: $SDK"
+              cd "$SDK"
+
+              # use the GitHub mirrors, same as the upstream CI does
+              sed -e "s,https://git.openwrt.org/feed/,https://github.com/openwrt/," \
+                  -e "s,https://git.openwrt.org/openwrt/,https://github.com/openwrt/," \
+                  -e "s,https://git.openwrt.org/project/,https://github.com/openwrt/," \
+                  feeds.conf.default > feeds.conf
+              echo "src-link packages_ci /feed/" >> feeds.conf
+
+              ./scripts/feeds update -a
+              ./scripts/feeds install -p packages_ci -f airplay2 nqptp luci-app-airplay2
+
+              make defconfig
+
+              # select what we ship (feeds install does not touch .config)
+              sed -i -E "/^CONFIG_PACKAGE_(airplay2|nqptp|luci-app-airplay2|luci-i18n-airplay2-zh-cn)[= ]/d" .config
+              cat >> .config <<EOF
+              CONFIG_PACKAGE_airplay2=y
+              CONFIG_PACKAGE_nqptp=y
+              CONFIG_PACKAGE_luci-app-airplay2=y
+              CONFIG_PACKAGE_luci-i18n-airplay2-zh-cn=y
+              EOF
+              make defconfig
+
+              echo "=== selected packages ==="
+              grep -E "^CONFIG_PACKAGE_(airplay2|nqptp|luci-app-airplay2)=" .config
+
+              echo "=== build ==="
+              make package/airplay2/compile package/nqptp/compile \
+                   package/luci-app-airplay2/compile V=s -j$(nproc)
+
+              echo "=== artifacts ==="
+              find bin/packages -path "*packages_ci*" \( -name "*.apk" -o -name "*.ipk" \) -exec cp -v {} /out/ \;
+              ls -la /out
+            '
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.arch }}
-          path: bin/packages/${{ matrix.arch }}/packages_ci/*.ipk
+          name: ${{ matrix.arch }}-${{ matrix.sdk }}
+          path: out/*
+          if-no-files-found: error
 
       - name: Upload packages
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && matrix.publish
         uses: ncipollo/release-action@v1
         with:
           name: ${{ github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           replacesArtifacts: true
-          artifacts: "bin/packages/${{ matrix.arch }}/packages_ci/*.ipk"
+          artifacts: "out/*"
