@@ -55,10 +55,15 @@ cat feeds.conf      # 应为 5 行：4 个官方 feed + airplay2
 ./scripts/feeds uninstall nqptp
 ./scripts/feeds install -p airplay2 airplay2 nqptp luci-app-airplay2
 
-# 3. 选包并编译
+# 3. 关键前置：关掉 ffmpeg 的 DRM（详见「常见问题 3」，不做这一步菜单里根本没有 airplay2）
+sed -i '/^CONFIG_FFMPEG_LIBDRM/d' .config
+echo '# CONFIG_FFMPEG_LIBDRM is not set' >> .config
+make defconfig
+
+# 4. 选包并编译
 make menuconfig
 #   Sound                    -> <*> airplay2
-#   LuCI -> 3. Applications  -> <*> luci-app-airplay2   （文件名过滤，字母序在 L 区）
+#   LuCI -> 3. Applications  -> <*> luci-app-airplay2   （显示的是标题，字母序在 L 区）
 make -j$(nproc)
 ```
 
@@ -147,22 +152,42 @@ git checkout feeds.conf.default
 cp feeds.conf.default feeds.conf
 ```
 
-### 3. `FFMPEG_LIBDRM` 的隐藏条件
+### 3. 菜单里看不到，但搜索能搜到（`FFMPEG_LIBDRM`）
 
-仅当 ffmpeg 版本含 `FFMPEG_LIBDRM`（默认 y）且树里**没有** `video-support` 包时才会出现。判定：menuconfig 里按 `/` 搜 `FFMPEG_LIBDRM`，搜不到就与本条无关。处理二选一：
+**这是 master 上最常见的现象**：按 `/` 能搜到 `luci-app-airplay2`，回到菜单里却怎么都找不到。
+
+原因：`PACKAGE_luci-app-airplay2` 的 kconfig 里带了一条条件
+
+```
+Depends on: (!FFMPEG_LIBDRM [=y] || PACKAGE_video-support [=y]) && ...
+```
+
+来源是 `airplay2 → libffmpeg-full → libdrm`，而 `libdrm` 写的是 `DEPENDS:=video-support`；OpenWrt 会把这条条件传播给所有 `libffmpeg` 使用者。master 上 `FFMPEG_LIBDRM` **默认 y**，`video-support` 默认 n，条件不成立 → **条目存在但被隐藏**（搜索仍能搜到，因为符号确实生成了）。菜单里选不上，也就没法通过选它来自救——这是条件依赖的“鸡生蛋”问题，必须先改 `.config`。
+
+判定（一条命令）：
 
 ```sh
-# A. 纯音频用不到 DRM
+grep -A8 'config PACKAGE_luci-app-airplay2$' tmp/.config-package.in
+# 看到 depends on 里有 !FFMPEG_LIBDRM 就是本条
+```
+
+修复（`make menuconfig` **之前**做，二选一）：
+
+```sh
+# A. 纯音频设备用不到 DRM，关掉最干净（推荐）
 sed -i '/^CONFIG_FFMPEG_LIBDRM/d' .config
 echo '# CONFIG_FFMPEG_LIBDRM is not set' >> .config
 make defconfig
 ```
 
 ```sh
-# B. 保留 DRM，选上 video-support
+# B. 固件里其它组件需要 DRM：保留 ffmpeg 的 DRM，改选 video-support
+sed -i '/^CONFIG_PACKAGE_video-support[= ]/d' .config
 echo 'CONFIG_PACKAGE_video-support=y' >> .config
 make defconfig
 ```
+
+改完再进 `make menuconfig`，`Sound` 和 `LuCI → 3. Applications` 里都能看到了。本仓库的 `airplay2` 在树里有 `hardware-support` 包时会自动 `+video-support`，所以非交互构建（直接写 `.config` + `make`）不受影响，只有手工 menuconfig 需要这一步。
 
 ### 4. 依赖会自动带出吗
 
