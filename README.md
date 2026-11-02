@@ -201,7 +201,34 @@ make defconfig
 
 ## 常见问题：能发现设备，但没声音 / 点一下又弹回
 
-按顺序排查，前两条占九成。
+按顺序排查，第 0、1 条占九成。
+
+### 0. 系统里一块声卡都没有（`no soundcards`）
+
+```sh
+cat /proc/asound/cards
+aplay -l
+```
+
+出现 `--- no soundcards ---` 说明内核里没有任何声卡，此时改 airplay2 的任何配置都没有意义。注意：nqptp 是 smi11、7000 端口在 LISTEN、`airplay2 -h` 没有 IMPORTANT NOTE，只证明 **AirPlay 协议栈是通的**，跟能不能出声是两件事——手机连上“声音还在手机里”、电脑点一下灰掉再恢复，正是最后写 ALSA 找不到设备的典型表现。
+
+先分清是“驱动没装”还是“设备没枚举”：
+
+```sh
+find /lib/modules -name 'snd-usb-audio*'
+lsmod | grep snd
+ls /sys/bus/usb/devices/
+```
+
+| 现象 | 判断 |
+| --- | --- |
+| `/sys/bus/usb/devices/` 里只有 `usb1`、`usb2`、`2-1`、`2-1:1.0` 这类节点 | 没有外部 USB 设备枚举成功，**不是驱动问题** |
+| `2-1` 且 `idVendor=8087`、`idProduct=8000` | 这是主板内置的 Intel Rate Matching Hub（dmesg 会写 `hub 2-1:1.0: 8 ports detected`），**不是音箱**；真实设备是 `2-1.2`、`1-1` 这种带点的子节点 |
+| 出现 `idVendor=8087` 却看不到任何带点节点 | 音箱没枚举：换 USB 口（后置直连主板的口，别用前置面板/延长线）、换**数据线** |
+
+> 大量“USB 音箱”随箱附带的是**纯供电线**（只有 VBUS/GND 两根），插上永远不枚举。插个 U 盘到同一口能立刻区分是口坏了还是线的问题。若音箱除 USB 外还有 3.5mm 或蓝牙，它的 USB 很可能只负责供电，天生不会有声卡。
+
+`kmod-usb-audio` 只覆盖 USB 声卡；x86 主机想用机箱后面的 3.5mm，还需要 HDA（`kmod-snd-hda-intel` + `kmod-snd-hda-codec-realtek`，HDMI 输出加 `kmod-snd-hda-codec-hdmi`）。
 
 ### 1. 「ALSA 输出设备」用了「默认」
 
@@ -221,7 +248,16 @@ uci set airplay2.@airplay2[0].alsa_output_device='hw:1'
 uci commit airplay2 && /etc/init.d/airplay2 restart
 ```
 
-混音器控制名先用「默认（软件音量）」，等有声音了再按 `amixer -c N scontrols` 的实际名字填 `PCM` / `Speaker`。
+混音器控制名先用「默认（软件音量）」，等有声音了再按 `amixer -c N scontrols` 的实际名字填 `PCM` / `Speaker`。若 `scontrols` 什么都列不出来（UAC1 的 SA9023 这类 DAC 没有硬件混音器），**必须留空**，填 `PCM` 会让 airplay2 打开混音器失败、整条链路无声。
+
+排查出声的最快办法是用 `aplay` 打白噪声，不需要任何音频文件（OpenWrt 的 `alsa-utils` 不一定带 `speaker-test`）：
+
+```sh
+amixer -c 0 sset Master 80% unmute 2>/dev/null
+head -c 1000000 /dev/urandom | aplay -D plughw:0 -t raw -f S16_LE -r 48000 -c 2
+```
+
+能听到 2 秒“沙沙”声，再去连手机；反过来做只会分不清是驱动、ALSA 还是 AirPlay 的问题。
 
 ### 2. nqptp 没跑或版本不对
 
