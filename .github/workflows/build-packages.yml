@@ -30,6 +30,9 @@ jobs:
           FEEDNAME: packages_ci
           PACKAGES: luci-app-airplay2 nqptp
           NO_REFRESH_CHECK: true
+          # keep compiler/configure error output visible (the default discards
+          # stdout *and* stderr, which hides the reason a build failed)
+          V: s
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
