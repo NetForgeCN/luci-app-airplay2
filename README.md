@@ -164,11 +164,12 @@ Depends on: (!FFMPEG_LIBDRM [=y] || PACKAGE_video-support [=y]) && ...
 
 来源是 `airplay2 → libffmpeg-full → libdrm`，而 `libdrm` 写的是 `DEPENDS:=video-support`；OpenWrt 会把这条条件传播给所有 `libffmpeg` 使用者。master 上 `FFMPEG_LIBDRM` **默认 y**，`video-support` 默认 n，条件不成立 → **条目存在但被隐藏**（搜索仍能搜到，因为符号确实生成了）。菜单里选不上，也就没法通过选它来自救——这是条件依赖的“鸡生蛋”问题，必须先改 `.config`。
 
-判定（一条命令）：
+判定（看当前取值，一条命令）：
 
 ```sh
-grep -A8 'config PACKAGE_luci-app-airplay2$' tmp/.config-package.in
-# 看到 depends on 里有 !FFMPEG_LIBDRM 就是本条
+grep -E '^(# )?CONFIG_(FFMPEG_LIBDRM|PACKAGE_video-support)' .config
+# 出现 CONFIG_FFMPEG_LIBDRM=y 且没有 CONFIG_PACKAGE_video-support=y，就是本条
+# （kconfig 文本里那句 depends on 是常驻的，要看取值而不是看有没有那行）
 ```
 
 修复（`make menuconfig` **之前**做，二选一）：
