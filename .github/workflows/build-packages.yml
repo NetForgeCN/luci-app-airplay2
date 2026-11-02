@@ -70,12 +70,7 @@ jobs:
 
               # select what we ship (feeds install does not touch .config)
               sed -i -E "/^CONFIG_PACKAGE_(airplay2|nqptp|luci-app-airplay2|luci-i18n-airplay2-zh-cn)[= ]/d" .config
-              cat >> .config <<EOF
-              CONFIG_PACKAGE_airplay2=y
-              CONFIG_PACKAGE_nqptp=y
-              CONFIG_PACKAGE_luci-app-airplay2=y
-              CONFIG_PACKAGE_luci-i18n-airplay2-zh-cn=y
-              EOF
+              printf "CONFIG_PACKAGE_airplay2=y\nCONFIG_PACKAGE_nqptp=y\nCONFIG_PACKAGE_luci-app-airplay2=y\nCONFIG_PACKAGE_luci-i18n-airplay2-zh-cn=y\n" >> .config
               make defconfig
 
               echo "=== selected packages ==="
