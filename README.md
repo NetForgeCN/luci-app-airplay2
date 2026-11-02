@@ -4,7 +4,8 @@ OpenWrt 上的 AirPlay / AirPlay 2 音频接收器（播放端），带 LuCI 管
 
 - 上游：<https://github.com/mikebrady/shairport-sync>
 - 当前版本：**shairport-sync 5.6.2 + nqptp 1.2.9**（OpenSSL 构建，含 AirPlay 2）
-- 编译验证：OpenWrt 24.10 SDK（aarch64_generic、x86_64）
+- 编译验证：OpenWrt **24.10** SDK（aarch64_generic、x86_64）
+- 分支要求：只能用 **`openwrt-24.10` / `openwrt-23.05` 稳定分支**，不要用 `master`（原因见「常见问题」第 1 条）
 - 现成安装包：<https://github.com/NetForgeCN/luci-app-airplay2/releases>
 
 ## 本仓库提供的包
@@ -25,17 +26,25 @@ OpenWrt 上的 AirPlay / AirPlay 2 音频接收器（播放端），带 LuCI 管
 
 ## 方式一：在 OpenWrt 编译阶段加入（推荐：feeds）
 
+> **前置检查**：`feeds.conf` 里必须有官方四个 feed（packages / luci / routing / telephony）。本仓库只是**追加**一行，**绝不能把 `feeds.conf.default` 覆盖成只剩 airplay2**——那样 packages/luci feed 全部消失，airplay2 的依赖（libffmpeg-full、alsa-lib、luci-base…）一处都解析不到，menuconfig 里什么都不会出现。
+
 在 OpenWrt 源码树根目录执行：
 
 ```sh
-# 1. 添加本仓库为 feed（建议放在 packages 一行的上面，保证 nqptp 用本仓库这份）
-echo 'src-git airplay2 https://github.com/NetForgeCN/luci-app-airplay2.git;main' >> feeds.conf
-# 若还没有 feeds.conf：cp feeds.conf.default feeds.conf 后再执行上面的 echo
+# 0. 准备 feeds.conf：已有就跳过；没有就从 default 复制（复制，不是覆盖）
+[ -f feeds.conf ] || cp feeds.conf.default feeds.conf
+grep -q '^src-git packages' feeds.conf || echo "!! feeds.conf 缺官方 feed，请重新 cp feeds.conf.default feeds.conf"
 
-# 2. 拉取并安装到编译树（-p 明确指定从本 feed 取，避免 nqptp 与 packages feed 的 1.2.4 混淆）
-./scripts/feeds update airplay2
-./scripts/feeds install -p airplay2 airplay2 nqptp
-./scripts/feeds install -p airplay2 luci-app-airplay2   # 需要 LuCI 界面时
+# 1. 追加本仓库为 feed —— 必须用 >> 追加，不要用 > 覆盖
+grep -q 'src-git airplay2' feeds.conf || \
+  echo 'src-git airplay2 https://github.com/NetForgeCN/luci-app-airplay2.git;main' >> feeds.conf
+cat feeds.conf      # 应看到 5 行：4 个官方 feed + 1 个 airplay2
+
+# 2. 拉取并安装到编译树（-p 明确指定从本 feed 取 nqptp，避免 nqptp 与 packages feed 的 1.2.4 混淆）
+./scripts/feeds update -a
+./scripts/feeds install -a
+./scripts/feeds uninstall nqptp                                  # install -a 会先装官方 1.2.4，先摘掉
+./scripts/feeds install -p airplay2 nqptp                         # 换成我们的 1.2.9（smi11）
 
 # 3. 选包并编译
 make menuconfig
@@ -68,11 +77,42 @@ nqptp 不需要单独处理：它就在本仓库里（`nqptp/` 目录），跟 a
 
 ## 常见问题：menuconfig 里看不到 / 选不上 airplay2
 
-在 OpenWrt 主线及较新的分支上（ffmpeg 已重构为单一 `libffmpeg` 的版本），ffmpeg 的 `FFMPEG_LIBDRM`（DRM 支持）**默认开启**。airplay2 依赖 libffmpeg → libdrm → `video-support`（OpenWrt 核心里的 "Video device support" 功能包），这条链会给 airplay2 带来条件依赖 `(!FFMPEG_LIBDRM || PACKAGE_video-support)`；当 `FFMPEG_LIBDRM=y` 而 `video-support` 又没被选中时，airplay2 在 menuconfig 里会被**直接隐藏**——Sound 分类里找不到，搜索 airplay2 时值显示为 N，怎么都选不上（`luci-app-airplay2` 同理）。24.10 及更早版本没有 `FFMPEG_LIBDRM`，不受此影响。
+按顺序排查，绝大多数是第 1、2 条。
 
-解决（二选一，改完 `make defconfig`）：
+### 1. 用了 `master` 开发分支（本项目不支持）
 
-**方案 A（推荐，音频接收用不到 DRM，零副作用）**——关掉 ffmpeg 的 DRM 支持：
+本项目只支持 **`openwrt-24.10` / `openwrt-23.05`** 稳定分支（CI 用 24.10 SDK 验证）。`master` 上音频/视频的功能门控已从 kconfig 符号改成真实包，有两处硬性不兼容：
+
+| 本项目写法 | 24.10 / 23.05 | master |
+| --- | --- | --- |
+| `DEPENDS:=@AUDIO_SUPPORT` | `AUDIO_SUPPORT` 符号存在 | 符号已删除，改为 `audio-support` 包 → 条件永假 |
+| `+libffmpeg-full` | 包存在 | ffmpeg 已重构为单一 `libffmpeg`，包名不存在 |
+
+任意一条不满足，airplay2 的 kconfig 条目就**根本不会被生成**——Sound 里没有，按 `/` 搜 `airplay2` 也搜不到。换稳定分支即可：
+
+```sh
+git clone -b openwrt-24.10 --depth 1 https://github.com/openwrt/openwrt.git openwrt
+```
+
+### 2. `feeds.conf` 缺 feed 或被覆盖
+
+现象与第 1 条相同（条目根本不生成）。检查：
+
+```sh
+cat feeds.conf                                  # 应有 packages/luci/routing/telephony + airplay2 共 5 行
+ls -d package/feeds/airplay2/*                  # 应有 airplay2 nqptp luci-app-airplay2
+grep -c PACKAGE_airplay2 tmp/.config-package.in # 应为非 0
+```
+
+`feeds.conf.default` 原样是 4 行官方 feed，airplay2 只能用 `>>` **追加**。若 `feeds.conf.default` 已被覆盖成只剩 airplay2：`git checkout feeds.conf.default`，再按「方式一」重做。
+
+### 3. ffmpeg 带 `FFMPEG_LIBDRM` 时的额外条件（仅未来/开发分支）
+
+24.10 的 ffmpeg 没有这个选项，正常用不到。只有当 ffmpeg 版本含 `FFMPEG_LIBDRM`（默认 y）时，airplay2 → libffmpeg → libdrm → `video-support` 这条链会带来条件依赖 `(!FFMPEG_LIBDRM || PACKAGE_video-support)`，条件不满足时条目被隐藏。判定：menuconfig 里按 `/` 搜 `FFMPEG_LIBDRM`，搜不到就与本条无关。
+
+需要处理时（二选一，改完 `make defconfig`）：
+
+**方案 A（推荐，纯音频用不到 DRM，零副作用）**
 
 ```sh
 sed -i '/^CONFIG_FFMPEG_LIBDRM/d' .config
@@ -80,9 +120,7 @@ echo '# CONFIG_FFMPEG_LIBDRM is not set' >> .config
 make defconfig
 ```
 
-等价操作：menuconfig 里按 `/` 搜索 `FFMPEG_LIBDRM`，把 "DRM support (libdrm, needed for DRM_PRIME zero-copy)" 关为 N。
-
-**方案 B（保留 ffmpeg 的 DRM 支持）**——选上 `video-support`（位于 Hardware support → video-support，会引入 libdrm 等组件）：
+**方案 B（保留 ffmpeg 的 DRM 支持）**——选上 `video-support`（Hardware support → video-support，会引入 libdrm 等）
 
 ```sh
 sed -i '/^CONFIG_PACKAGE_video-support/d' .config
@@ -90,7 +128,13 @@ echo 'CONFIG_PACKAGE_video-support=y' >> .config
 make defconfig
 ```
 
-之后 Sound 分类里就会出现 airplay2，正常选 `<*>` 即可。
+### 4. 哪些依赖会自动带出
+
+选上 `airplay2` 后自动带出：`nqptp`、`libffmpeg-full`、`alsa-lib`、`libopenssl`、`libavahi-client`、`libsoxr`、`libplist`、`libsodium`、`libgcrypt`、`libmosquitto`、`libconfig`、`libpopt`、`libuuid`。
+
+`luci-app-airplay2` 需要另行手选：`LuCI → 3. Applications → Luci for Apple Airplay2 Receiver`（菜单显示的是 TITLE，字母序在 **L** 区，不在 A 区）。
+
+搜索结果里若出现 `DEFAULT_luci-i18n-airplay2-zh-cn` 这类 `Type: unknown` 的符号，是 kconfig 中被引用但未定义的残留符号，无实际作用，忽略即可；真正的中文包是 `LuCI → Applications → luci-i18n-airplay2-zh-cn`（前提 `luci-app-airplay2` 已选中）。
 
 另外：menuconfig 搜索结果里若出现 `DEFAULT_luci-i18n-airplay2-zh-cn` 这类 "Type: unknown" 的符号，是 kconfig 中被引用但未定义的残留符号，没有实际作用，忽略即可；真正要选的中文界面包是 `LuCI → Applications → luci-i18n-airplay2-zh-cn`（前提是 `luci-app-airplay2` 已选中）。
 
