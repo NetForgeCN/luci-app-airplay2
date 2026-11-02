@@ -19,6 +19,8 @@ PKG_MAINTAINER:=Ted Hess <thess@kitschensync.net>, \
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=COPYING LICENSES shairport.c
 
+# The source tarball unpacks into shairport-sync-$(PKG_VERSION), not
+# $(PKG_NAME)-$(PKG_VERSION), so the build directory has to be set by hand.
 PKG_BUILD_DIR:=$(BUILD_DIR)/shairport-sync-$(PKG_VERSION)
 
 # Shairport Sync 5.6.x uses Shared Memory Interface Version 11 ("smi11"), so the
@@ -26,44 +28,29 @@ PKG_BUILD_DIR:=$(BUILD_DIR)/shairport-sync-$(PKG_VERSION)
 # packages feed is 1.2.4 ("smi10") and cannot be used with this version --
 # install the nqptp package shipped in this feed instead.
 
+# shairport-sync 5.x cannot build --with-airplay-2 against mbed TLS, so this
+# package is OpenSSL only. The former airplay2-mbedtls / airplay2-mini variants
+# have been dropped: without AirPlay 2 they are just an older, less capable
+# shairport-sync, and they also broke the build. This mirrors the way the
+# package in the OpenWrt packages feed is set up (AirPlay 2 = OpenSSL only).
+
 PKG_FIXUP:=autoreconf
 PKG_INSTALL:=1
 PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
 
-define Package/airplay2/default
+define Package/airplay2
   SECTION:=sound
   CATEGORY:=Sound
-  TITLE:=AirPlay compatible audio player
-  DEPENDS:=@AUDIO_SUPPORT +libpthread +alsa-lib +libconfig +libdaemon +libpopt +libplist +libsodium +libgcrypt +libffmpeg-full +libuuid +nqptp +libmosquitto
-  PROVIDES:=airplay2
+  TITLE:=AirPlay and AirPlay 2 compatible audio player
+  DEPENDS:=@AUDIO_SUPPORT +libpthread +alsa-lib +libconfig +libdaemon +libpopt \
+	+libmosquitto +libopenssl +libavahi-client +libsoxr \
+	+libplist +libsodium +libgcrypt +libffmpeg-full +libuuid +nqptp
   URL:=https://github.com/mikebrady/shairport-sync
 endef
 
-define Package/airplay2-openssl
-  $(Package/airplay2/default)
-  TITLE+= (openssl)
-  DEPENDS+= +libopenssl +libavahi-client +libsoxr
-  VARIANT:=openssl
-endef
-
-define Package/airplay2-mbedtls
-  $(Package/airplay2/default)
-  TITLE+= (mbed TLS)
-  DEPENDS+= +libmbedtls +libavahi-client +libsoxr
-  VARIANT:=mbedtls
-  DEFAULT_VARIANT:=1
-endef
-
-define Package/airplay2-mini
-  $(Package/airplay2/default)
-  TITLE+= (minimal)
-  DEPENDS+= +libmbedtls
-  VARIANT:=mini
-endef
-
-define Package/airplay2/default/description
+define Package/airplay2/description
   Shairport Sync plays audio from iTunes and AirPlay sources, including
   iOS devices, Quicktime Player and third party sources such as forkedDaapd.
   Audio played by a Shairport Sync-powered device stays synchronised with the source
@@ -72,14 +59,8 @@ define Package/airplay2/default/description
   Shairport Sync does not support AirPlay video or photo streaming.
   Ensure Kernel Modules > Sound Support > kmod-sound-core is selected.
   Also select kmod-usb-audio if you want to use USB-connected sound cards.
-endef
-Package/airplay2-openssl/description = $(Package/airplay2/default/description)
-Package/airplay2-mbedtls/description = $(Package/airplay2/default/description)
 
-define Package/airplay2-mini/description
-  $(Package/airplay2/default/description)
-
-  Minimal version uses mbed TLS and does not include libsoxr and avahi support.
+  This build uses OpenSSL and includes AirPlay 2 support.
 endef
 
 TARGET_CFLAGS += -std=gnu17
@@ -87,36 +68,21 @@ TARGET_CFLAGS += -std=gnu17
 CONFIGURE_ARGS += \
 	--with-alsa \
 	--with-libdaemon \
-	--with-airplay-2 \
 	--with-pipe \
 	--with-mqtt-client \
-	--with-metadata
-
-ifeq ($(BUILD_VARIANT),openssl)
-  CONFIGURE_ARGS+= --with-ssl=openssl
-endif
-
-ifeq ($(BUILD_VARIANT),mbedtls)
-  CONFIGURE_ARGS+= --with-ssl=mbedtls
-endif
-
-ifeq ($(BUILD_VARIANT),mini)
-  CONFIGURE_ARGS+= --with-ssl=mbedtls --with-tinysvcmdns
-else
-  CONFIGURE_ARGS+= --with-avahi --with-soxr
-endif
+	--with-metadata \
+	--with-avahi \
+	--with-soxr \
+	--with-ssl=openssl \
+	--with-airplay-2
 
 TARGET_LDFLAGS += -Wl,--as-needed
 
-define Package/airplay2/default/conffiles
+define Package/airplay2/conffiles
 /etc/config/airplay2
 endef
 
-Package/airplay2-openssl/conffiles = $(Package/airplay2/default/conffiles)
-Package/airplay2-mbedtls/conffiles = $(Package/airplay2/default/conffiles)
-Package/airplay2-mini/conffiles = $(Package/airplay2/default/conffiles)
-
-define Package/airplay2/default/install
+define Package/airplay2/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/shairport-sync $(1)/usr/bin/airplay2
 	$(INSTALL_DIR) $(1)/etc/init.d
@@ -125,10 +91,4 @@ define Package/airplay2/default/install
 	$(INSTALL_CONF) ./files/airplay2.config $(1)/etc/config/airplay2
 endef
 
-Package/airplay2-openssl/install = $(Package/airplay2/default/install)
-Package/airplay2-mbedtls/install = $(Package/airplay2/default/install)
-Package/airplay2-mini/install = $(Package/airplay2/default/install)
-
-$(eval $(call BuildPackage,airplay2-openssl))
-$(eval $(call BuildPackage,airplay2-mbedtls))
-$(eval $(call BuildPackage,airplay2-mini))
+$(eval $(call BuildPackage,airplay2))
