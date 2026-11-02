@@ -41,23 +41,20 @@ PKG_BUILD_PARALLEL:=1
 include $(INCLUDE_DIR)/package.mk
 
 # --- Audio / video feature gate -------------------------------------------
-# OpenWrt 24.10 and older express the audio gate as a kconfig symbol
-# (AUDIO_SUPPORT). master (2026+) dropped that symbol and turned the gates
-# into real packages (audio-support / video-support) defined in
-# package/system/hardware-support. Pick whichever the tree provides, so the
-# same Makefile works on both.
-ifneq ($(wildcard $(TOPDIR)/package/system/hardware-support/Makefile),)
-  AIRPLAY2_AUDIO_GATE:=+audio-support
-  # On master libffmpeg defaults to FFMPEG_LIBDRM=y and libdrm depends on
-  # video-support. OpenWrt propagates that as the condition
-  # (!FFMPEG_LIBDRM || PACKAGE_video-support) onto every package depending on
-  # libffmpeg; when it is not met the package is hidden from menuconfig with no
-  # error at all. Pulling video-support in keeps the entry visible.
-  AIRPLAY2_VIDEO_GATE:=+video-support
-else
-  AIRPLAY2_AUDIO_GATE:=@AUDIO_SUPPORT
-  AIRPLAY2_VIDEO_GATE:=
-endif
+# There have been three generations of this gate:
+#   <= 24.10   kconfig symbol AUDIO_SUPPORT          (referenced in sound.mk)
+#   master     real packages audio-support / video-support
+#   snapshots  in between: symbol gone, packages not there yet
+# A gate that does not resolve makes OpenWrt drop the package from the
+# metadata entirely (it simply does not appear in menuconfig, with no error),
+# so only apply one when this tree actually provides it.
+AIRPLAY2_AUDIO_GATE:=$(if $(shell grep -qs AUDIO_SUPPORT "$(TOPDIR)/package/kernel/linux/modules/sound.mk" && echo 1),@AUDIO_SUPPORT,)
+
+# On master libffmpeg defaults to FFMPEG_LIBDRM=y and libdrm depends on
+# video-support; OpenWrt propagates that as (!FFMPEG_LIBDRM ||
+# PACKAGE_video-support) onto every libffmpeg consumer and hides it when the
+# condition is unmet. Only select it where the package exists.
+AIRPLAY2_VIDEO_GATE:=$(if $(wildcard $(TOPDIR)/package/system/hardware-support/Makefile),+video-support,)
 
 define Package/airplay2
   SECTION:=sound
