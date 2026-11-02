@@ -55,9 +55,9 @@ cat feeds.conf      # 应为 5 行：4 个官方 feed + airplay2
 ./scripts/feeds uninstall nqptp
 ./scripts/feeds install -p airplay2 airplay2 nqptp luci-app-airplay2
 
-# 3. 关键前置：关掉 ffmpeg 的 DRM（详见「常见问题 3」，不做这一步菜单里根本没有 airplay2）
-sed -i '/^CONFIG_FFMPEG_LIBDRM/d' .config
-echo '# CONFIG_FFMPEG_LIBDRM is not set' >> .config
+# 3. 关键前置：满足 libdrm 带来的隐藏条件（详见「常见问题 3」，不做这步菜单里根本没有 airplay2）
+sed -i '/^CONFIG_PACKAGE_video-support[= ]/d' .config
+echo 'CONFIG_PACKAGE_video-support=y' >> .config
 make defconfig
 
 # 4. 选包并编译
@@ -175,18 +175,23 @@ grep -E '^(# )?CONFIG_(FFMPEG_LIBDRM|PACKAGE_video-support)' .config
 修复（`make menuconfig` **之前**做，二选一）：
 
 ```sh
-# A. 纯音频设备用不到 DRM，关掉最干净（推荐）
-sed -i '/^CONFIG_FFMPEG_LIBDRM/d' .config
-echo '# CONFIG_FFMPEG_LIBDRM is not set' >> .config
-make defconfig
-```
-
-```sh
-# B. 固件里其它组件需要 DRM：保留 ffmpeg 的 DRM，改选 video-support
+# B. 选上 video-support（推荐，最省事，不动 ffmpeg 的任何选项）
 sed -i '/^CONFIG_PACKAGE_video-support[= ]/d' .config
 echo 'CONFIG_PACKAGE_video-support=y' >> .config
 make defconfig
 ```
+
+```sh
+# A. 彻底不要 DRM：必须连 FFMPEG_V4L2_REQUEST 一起关
+#    ffmpeg 的 Config.in 里 FFMPEG_V4L2_REQUEST 是 default y 且 select FFMPEG_LIBDRM，
+#    只关 FFMPEG_LIBDRM 会被它重新 select 回 y（defconfig 后弹回 =y 就是这个原因）
+sed -i '/^CONFIG_FFMPEG_LIBDRM/d;/^CONFIG_FFMPEG_V4L2_REQUEST/d' .config
+echo '# CONFIG_FFMPEG_LIBDRM is not set' >> .config
+echo '# CONFIG_FFMPEG_V4L2_REQUEST is not set' >> .config
+make defconfig
+```
+
+> `make defconfig` 如果打印 `recursive dependency detected`（qt5 / fwknop / squeezelite 等），那是这些 feed 自身的既有问题，与本包无关，配置仍会正常写出。
 
 改完再进 `make menuconfig`，`Sound` 和 `LuCI → 3. Applications` 里都能看到了。本仓库的 `airplay2` 在树里有 `hardware-support` 包时会自动 `+video-support`，所以非交互构建（直接写 `.config` + `make`）不受影响，只有手工 menuconfig 需要这一步。
 
