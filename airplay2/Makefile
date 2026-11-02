@@ -40,11 +40,31 @@ PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
 
+# --- Audio / video feature gate -------------------------------------------
+# OpenWrt 24.10 and older express the audio gate as a kconfig symbol
+# (AUDIO_SUPPORT). master (2026+) dropped that symbol and turned the gates
+# into real packages (audio-support / video-support) defined in
+# package/system/hardware-support. Pick whichever the tree provides, so the
+# same Makefile works on both.
+ifneq ($(wildcard $(TOPDIR)/package/system/hardware-support/Makefile),)
+  AIRPLAY2_AUDIO_GATE:=+audio-support
+  # On master libffmpeg defaults to FFMPEG_LIBDRM=y and libdrm depends on
+  # video-support. OpenWrt propagates that as the condition
+  # (!FFMPEG_LIBDRM || PACKAGE_video-support) onto every package depending on
+  # libffmpeg; when it is not met the package is hidden from menuconfig with no
+  # error at all. Pulling video-support in keeps the entry visible.
+  AIRPLAY2_VIDEO_GATE:=+video-support
+else
+  AIRPLAY2_AUDIO_GATE:=@AUDIO_SUPPORT
+  AIRPLAY2_VIDEO_GATE:=
+endif
+
 define Package/airplay2
   SECTION:=sound
   CATEGORY:=Sound
   TITLE:=AirPlay and AirPlay 2 compatible audio player
-  DEPENDS:=@AUDIO_SUPPORT +libpthread +alsa-lib +libconfig +libdaemon +libpopt \
+  DEPENDS:=$(AIRPLAY2_AUDIO_GATE) $(AIRPLAY2_VIDEO_GATE) \
+	+libpthread +alsa-lib +libconfig +libdaemon +libpopt \
 	+libmosquitto +libopenssl +libavahi-client +libsoxr \
 	+libplist +libsodium +libgcrypt +libffmpeg-full +libuuid +nqptp
   URL:=https://github.com/mikebrady/shairport-sync
