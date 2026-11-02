@@ -10,7 +10,7 @@ PKG_VERSION:=1.0.0
 PKG_RELEASE:=1
 
 LUCI_TITLE:=Luci for Apple Airplay2 Receiver
-LUCI_DEPENDS:=+alsa-utils +airplay2
+LUCI_DEPENDS:=+luci-base +alsa-utils +airplay2
 LUCI_PKGARCH:=all
 
 PKG_MAINTAINER:=sbwml <admin@cooluc.com>
