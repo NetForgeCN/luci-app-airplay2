@@ -199,6 +199,66 @@ make defconfig
 
 `airplay2` 选中后自动带出 `nqptp`、`libffmpeg-full`、`alsa-lib`、`libopenssl`、`libavahi-client`、`libsoxr`、`libplist`、`libsodium`、`libgcrypt`、`libmosquitto`、`libconfig`、`libpopt`、`libuuid`。`luci-app-airplay2` 是独立应用包，需要手选（`LuCI → 3. Applications`）。
 
+## 常见问题：能发现设备，但没声音 / 点一下又弹回
+
+按顺序排查，前两条占九成。
+
+### 1. 「ALSA 输出设备」用了「默认」
+
+`默认` 等于 ALSA 的 `default`，在 x86 上指向 **card 0**——通常是板载 HDA 或 HDMI，而不是你的 USB 音箱（多半是 card 1）。设备照连、数据照发，声音却进了一个没有扬声器的输出，或者干脆打不开设备导致会话立刻结束。
+
+```sh
+cat /proc/asound/cards      # 看 USB 声卡排第几
+aplay -l
+speaker-test -D hw:1,0 -c 2 -t sine -l 1   # 先用卡号确认硬件真能出声
+amixer -c 1 sset PCM 90% unmute            # 没声音也可能只是静音
+```
+
+LuCI 的「ALSA 输出设备」下拉框会自动列出检测到的声卡，直接选 `hw:N`；命令行等价于：
+
+```sh
+uci set airplay2.@airplay2[0].alsa_output_device='hw:1'
+uci commit airplay2 && /etc/init.d/airplay2 restart
+```
+
+混音器控制名先用「默认（软件音量）」，等有声音了再按 `amixer -c N scontrols` 的实际名字填 `PCM` / `Speaker`。
+
+### 2. nqptp 没跑或版本不对
+
+AirPlay 2 必须有 nqptp ≥ 1.2.9（smi11），且先于 airplay2 启动。
+
+```sh
+pgrep -fa nqptp
+nqptp -V        # 必须显示 smi11
+```
+
+没有就 `/etc/init.d/nqptp enable && /etc/init.d/nqptp start`。
+
+### 3. ffmpeg 缺 fltp AAC 解码器（AirPlay 2 直接不可用）
+
+```sh
+airplay2 -h | head -6
+```
+
+出现 `IMPORTANT NOTE: Shairport Sync can not run on this system` 就是缺「fltp」AAC 解码器，AirPlay 2 起不来（AirPlay 1 仍可用）。本包依赖 `libffmpeg-full`，正常不会踩到。
+
+### 4. 端口
+
+上游默认：AirPlay 2 用 **7000**，AirPlay 1 用 5000。把「端口」改成 7000 再试。
+
+### 5. 隔离定位：先试 AirPlay 1
+
+```sh
+/etc/init.d/airplay2 stop
+airplay2 -c /var/etc/airplay2-airplay2.conf --service-type=classic -v
+```
+
+AirPlay 1 有声音、AirPlay 2 没有 → 集中在第 2、3 条。看日志：
+
+```sh
+logread -f | grep -iE 'airplay2|shairport|nqptp|alsa'
+```
+
 ## 从 4.3.x 升级的注意点
 
 - shairport-sync 5.0 起配置文件格式有较大变化（多声道、`alac_decoder` 默认改为 ffmpeg 等），见上游 [CONFIGURATIONFILECHANGES5.md](https://github.com/mikebrady/shairport-sync/blob/5.6.2/CONFIGURATIONFILECHANGES5.md)
