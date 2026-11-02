@@ -66,6 +66,34 @@ make menuconfig && make -j$(nproc)
 
 nqptp 不需要单独处理：它就在本仓库里（`nqptp/` 目录），跟 airplay2 一起被加入编译树。
 
+## 常见问题：menuconfig 里看不到 / 选不上 airplay2
+
+在 OpenWrt 主线及较新的分支上（ffmpeg 已重构为单一 `libffmpeg` 的版本），ffmpeg 的 `FFMPEG_LIBDRM`（DRM 支持）**默认开启**。airplay2 依赖 libffmpeg → libdrm → `video-support`（OpenWrt 核心里的 "Video device support" 功能包），这条链会给 airplay2 带来条件依赖 `(!FFMPEG_LIBDRM || PACKAGE_video-support)`；当 `FFMPEG_LIBDRM=y` 而 `video-support` 又没被选中时，airplay2 在 menuconfig 里会被**直接隐藏**——Sound 分类里找不到，搜索 airplay2 时值显示为 N，怎么都选不上（`luci-app-airplay2` 同理）。24.10 及更早版本没有 `FFMPEG_LIBDRM`，不受此影响。
+
+解决（二选一，改完 `make defconfig`）：
+
+**方案 A（推荐，音频接收用不到 DRM，零副作用）**——关掉 ffmpeg 的 DRM 支持：
+
+```sh
+sed -i '/^CONFIG_FFMPEG_LIBDRM/d' .config
+echo '# CONFIG_FFMPEG_LIBDRM is not set' >> .config
+make defconfig
+```
+
+等价操作：menuconfig 里按 `/` 搜索 `FFMPEG_LIBDRM`，把 "DRM support (libdrm, needed for DRM_PRIME zero-copy)" 关为 N。
+
+**方案 B（保留 ffmpeg 的 DRM 支持）**——选上 `video-support`（位于 Hardware support → video-support，会引入 libdrm 等组件）：
+
+```sh
+sed -i '/^CONFIG_PACKAGE_video-support/d' .config
+echo 'CONFIG_PACKAGE_video-support=y' >> .config
+make defconfig
+```
+
+之后 Sound 分类里就会出现 airplay2，正常选 `<*>` 即可。
+
+另外：menuconfig 搜索结果里若出现 `DEFAULT_luci-i18n-airplay2-zh-cn` 这类 "Type: unknown" 的符号，是 kconfig 中被引用但未定义的残留符号，没有实际作用，忽略即可；真正要选的中文界面包是 `LuCI → Applications → luci-i18n-airplay2-zh-cn`（前提是 `luci-app-airplay2` 已选中）。
+
 ## 在已装好的 OpenWrt 上安装（免编译）
 
 从 [Releases](https://github.com/NetForgeCN/luci-app-airplay2/releases) 下载对应架构的 ipk：
