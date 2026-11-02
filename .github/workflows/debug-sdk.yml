@@ -14,14 +14,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inspect image layout
+      - name: Prepare SDK and inspect kconfig
         run: |
-          docker run --rm --entrypoint bash "ghcr.io/openwrt/sdk:x86_64-${{ inputs.sdk }}" -c '
-            echo "=== /entry.sh ==="; cat /entry.sh 2>/dev/null || echo "(none)"
-            echo "=== /start.sh ==="; cat /start.sh 2>/dev/null || echo "(none)"
-            echo "=== ls -la /builder ==="; ls -la /builder | head
-            echo "=== find feeds.conf (any depth) ==="
-            find / -name "feeds.conf*" 2>/dev/null | head
-            echo "=== find scripts/feeds ==="
-            find / -maxdepth 6 -path "*/scripts/feeds" 2>/dev/null | head
-          '
+          docker run --rm --entrypoint bash -v "$PWD:/feed" \
+            "ghcr.io/openwrt/sdk:x86_64-${{ inputs.sdk }}" -c '
+              set -e
+              cd /builder
+              [ ! -f setup.sh ] || bash setup.sh
+              SDK=$(find /builder -maxdepth 5 -path "*/scripts/feeds" -printf "%h\n" 2>/dev/null | head -1)
+              SDK=$(dirname "$SDK")
+              echo "SDK ROOT: $SDK"
+              cd "$SDK"
+
+              sed -e "s,https://git.openwrt.org/feed/,https://github.com/openwrt/," \
+                  -e "s,https://git.openwrt.org/openwrt/,https://github.com/openwrt/," \
+                  -e "s,https://git.openwrt.org/project/,https://github.com/openwrt/," \
+                  feeds.conf.default > feeds.conf
+              echo "src-link packages_ci /feed/" >> feeds.conf
+
+              ./scripts/feeds update -a >/tmp/feeds-update.log 2>&1 || tail -20 /tmp/feeds-update.log
+              ./scripts/feeds install -p packages_ci -f luci-app-airplay2 || true
+              ./scripts/feeds install -p packages_ci -f airplay2 || true
+              ./scripts/feeds install -p packages_ci -f nqptp || true
+
+              echo "=== package dirs ==="
+              ls -d package/feeds/packages_ci/* 2>/dev/null || echo "(none)"
+
+              make defconfig >/dev/null 2>&1 || true
+
+              echo "=== .config selected ==="
+              grep -E "PACKAGE_(luci-app-airplay2|airplay2|nqptp)=" .config || echo "(none)"
+
+              echo "=== kconfig: airplay2 ==="
+              awk "/^config PACKAGE_airplay2\$/,/^$/" tmp/.config-package.in || echo "(missing)"
+
+              echo "=== kconfig: luci-app-airplay2 ==="
+              awk "/^config PACKAGE_luci-app-airplay2\$/,/^$/" tmp/.config-package.in || echo "(missing)"
+
+              echo "=== packagedeps ==="
+              grep -n "luci-app-airplay2" tmp/.packagedeps | head -3 || echo "(none)"
+            '
