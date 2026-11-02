@@ -6,6 +6,8 @@ OpenWrt 上的 AirPlay / AirPlay 2 音频接收器（播放端），带 LuCI 管
 - 当前版本：**shairport-sync 5.6.2 + nqptp 1.2.9**（OpenSSL 构建，含 AirPlay 2）
 - 目标版本：**OpenWrt master（snapshot）** 与 **24.10 / 23.05**
 - 现成安装包：<https://github.com/NetForgeCN/luci-app-airplay2/releases>
+  - `v5.1.0`：master / snapshot 的 **.apk**
+  - `v5.0.0`：24.10 / 23.05 的 **.ipk**
 
 ## 分支说明
 
@@ -85,15 +87,21 @@ CI（`.github/workflows/build-packages.yml`）直接在 `ghcr.io/openwrt/sdk:<ar
 
 ### master（apk）
 
+Releases 里的文件名带架构后缀（`x86_64` / `aarch64_generic`）：
+
 ```sh
 # 电脑上
-scp nqptp-1.2.9-r1.apk airplay2-5.6.2-r1.apk luci-app-airplay2-1.0.0-r1.apk root@<IP>:/tmp/
+scp nqptp-1.2.9-r1_<arch>.apk airplay2-5.6.2-r1_<arch>.apk \
+    luci-app-airplay2-1.0.0-r1.apk luci-i18n-airplay2-zh-cn.apk root@<IP>:/tmp/
 
 # 路由器上
 apk update
 cd /tmp
-apk add --allow-untrusted ./nqptp-1.2.9-r1.apk ./airplay2-5.6.2-r1.apk ./luci-app-airplay2-1.0.0-r1.apk
+apk add --allow-untrusted ./nqptp-1.2.9-r1_<arch>.apk ./airplay2-5.6.2-r1_<arch>.apk \
+    ./luci-app-airplay2-1.0.0-r1.apk ./luci-i18n-airplay2-zh-cn.apk
 ```
+
+自己编译的包没有签名，必须加 `--allow-untrusted`。
 
 ### 24.10 / 23.05（opkg）
 
