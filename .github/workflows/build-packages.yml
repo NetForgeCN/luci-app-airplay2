@@ -110,3 +110,8 @@ jobs:
           allowUpdates: true
           replacesArtifacts: true
           artifacts: "out/*"
+          # A tag push fills in nothing by itself: the annotated tag message lives
+          # in the tag object and never reaches the release, so v5.1.1 published
+          # with an empty body. Build the notes from the commits since the
+          # previous tag instead.
+          generateReleaseNotes: true
