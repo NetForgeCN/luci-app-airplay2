@@ -6,7 +6,7 @@ OpenWrt 上的 AirPlay / AirPlay 2 音频接收器，带 LuCI 界面。
 - 当前版本：**shairport-sync 5.6.3 + nqptp 1.2.9**（OpenSSL 构建，含 AirPlay 2）
 - 支持：OpenWrt master / snapshot（apk）与 24.10 / 23.05（opkg）
 - 现成安装包：<https://github.com/NetForgeCN/luci-app-airplay2/releases>
-  - `v5.1.0`：master / snapshot 的 `.apk`
+  - `v5.1.1`：master / snapshot 的 `.apk`（`airplay2` / `nqptp` 带架构后缀，`luci-*` 不带）
   - `v5.0.0`：24.10 / 23.05 的 `.ipk`
 
 ## 本仓库提供的包
