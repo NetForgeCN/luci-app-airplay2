@@ -82,7 +82,7 @@ make menuconfig && make -j$(nproc)
 
 ### master（apk）
 
-Releases 里的文件名带架构后缀（`x86_64` / `aarch64_generic`）：
+Releases 里 `airplay2` / `nqptp` 的包名带架构后缀（`x86_64` / `aarch64_generic`），`luci-*` 与架构无关、保持原名：
 
 ```sh
 # 电脑上
