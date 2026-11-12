@@ -13,7 +13,7 @@ OpenWrt 上的 AirPlay / AirPlay 2 音频接收器，带 LuCI 界面。
 
 | 包 | 说明 |
 | --- | --- |
-| `airplay2` | shairport-sync 5.6.2，装为 `/usr/bin/airplay2`，OpenSSL + AirPlay 2 |
+| `airplay2` | shairport-sync 5.6.3，装为 `/usr/bin/airplay2`，OpenSSL + AirPlay 2 |
 | `nqptp` | AirPlay 2 时间同步伴侣（1.2.9，smi11） |
 | `luci-app-airplay2` | LuCI 界面（含中文翻译） |
 
@@ -86,13 +86,13 @@ Releases 里的文件名带架构后缀（`x86_64` / `aarch64_generic`）：
 
 ```sh
 # 电脑上
-scp nqptp-1.2.9-r1_<arch>.apk airplay2-5.6.2-r1_<arch>.apk \
+scp nqptp-1.2.9-r1_<arch>.apk airplay2-5.6.3-r1_<arch>.apk \
     luci-app-airplay2-1.0.0-r1.apk luci-i18n-airplay2-zh-cn.apk root@<IP>:/tmp/
 
 # 路由器上
 apk update
 cd /tmp
-apk add --allow-untrusted ./nqptp-1.2.9-r1_<arch>.apk ./airplay2-5.6.2-r1_<arch>.apk \
+apk add --allow-untrusted ./nqptp-1.2.9-r1_<arch>.apk ./airplay2-5.6.3-r1_<arch>.apk \
     ./luci-app-airplay2-1.0.0-r1.apk ./luci-i18n-airplay2-zh-cn.apk
 ```
 
@@ -103,7 +103,7 @@ apk add --allow-untrusted ./nqptp-1.2.9-r1_<arch>.apk ./airplay2-5.6.2-r1_<arch>
 ```sh
 opkg update
 cd /tmp
-opkg install nqptp_1.2.9-r1_<架构>.ipk airplay2_5.6.2-r1_<架构>.ipk luci-app-airplay2_1.0.0-r1_all.ipk
+opkg install nqptp_1.2.9-r1_<架构>.ipk airplay2_5.6.3-r1_<架构>.ipk luci-app-airplay2_1.0.0-r1_all.ipk
 ```
 
 ### 两者共通
@@ -125,6 +125,15 @@ nqptp -V                     # 必须显示 smi11
 | ALSA 混音器控制名称 | 先看 `amixer -c N scontrols`，能列出来才填 `PCM`/`Speaker`；没有硬件混音器的 DAC（如 UAC1 的 SA9023）**必须留空**，填了会打开失败、整条链路无声 |
 | 端口 | AirPlay 2 用 **7000**（AirPlay 1 才是 5000）。改完 `restart`，用 `netstat -lntp \| grep 7000` 确认真的换了 |
 | 名称 | 支持 `%v`（版本）、`%h`（主机名），`AirPlay2-%v-%h` 即可 |
+
+LuCI 只暴露了常用项，其余走 UCI 直改，例如 5.6.3 新增的两个：
+
+```sh
+# 把服务信息交给 metadata 管道而不是自己广播，供自带 mDNS 应答器的程序发布
+uci set airplay2.@airplay2[0].mdns_backend='metadata'   # 需要同时开 metadata_enabled
+# 同一台机器跑多个实例时给 D-Bus/MPRIS 总线名加后缀（本包未编 dbus，仅供改包者参考）
+uci commit airplay2 && /etc/init.d/airplay2 restart
+```
 
 ## 排障
 
@@ -207,9 +216,11 @@ make defconfig
 
 `.github/workflows/upstream-check.yml` 每天检查一次 shairport-sync 与 nqptp 的新 tag：
 
-- 有更新 → 改写 `PKG_VERSION` / `PKG_HASH` / `PKG_RELEASE`，同步本文件顶部的版本号，推 `chore/upstream-bump` 分支并开 PR，再派发一次 `Build packages` 做编译验证
+- 有更新 → 改写 `PKG_VERSION` / `PKG_HASH` / `PKG_RELEASE`，同步本文件里所有写着版本号的地方（顶部版本行、安装命令里的产物名、指向上游 tag 的文档链接），推 `chore/<包>-<版本>` 分支并开 PR，再派发一次 `Build packages` 做编译验证
+- 同一版本再检查一次时分支已存在，只刷新 PR 正文、不动分支，人工补的提交不会被覆盖
 - 没有更新 → 什么都不做，不产生空提交
 - PR 正文会列出两个包的 SMI 版本；不一致时显著提示——这是最容易漏、又必然导致“连得上但没声音”的地方
+- 仓库如果没开 “Allow GitHub Actions to create and approve pull requests”，开 PR 会被拒；这种情况下工作流改为开 issue 通知，并在正文里给出手动开 PR 的链接（不会再出现“分支推上去了但没人知道”）
 
 逻辑在 `scripts/check_upstream.py`，本地也能跑：
 
@@ -221,14 +232,14 @@ python3 scripts/check_upstream.py nqptp         # 只查某个包
 
 ## 从 4.3.x 升级
 
-- shairport-sync 5.0 起配置文件格式有较大变化（多声道、`alac_decoder` 默认改为 ffmpeg 等），见上游 [CONFIGURATIONFILECHANGES5.md](https://github.com/mikebrady/shairport-sync/blob/5.6.2/CONFIGURATIONFILECHANGES5.md)
-- LuCI 的 UCI 选项已逐项核对，在 5.6.2 下仍全部有效
+- shairport-sync 5.0 起配置文件格式有较大变化（多声道、`alac_decoder` 默认改为 ffmpeg 等），见上游 [CONFIGURATIONFILECHANGES5.md](https://github.com/mikebrady/shairport-sync/blob/5.6.3/CONFIGURATIONFILECHANGES5.md)
+- LuCI 的 UCI 选项已逐项核对，在 5.6.3 下仍全部有效
 - 装过旧版 `airplay2-mbedtls` / `airplay2-mini` 的，先卸载再装 `airplay2`
 
 ## 构建细节（维护者参考）
 
 - plist 代码生成补丁：`airplay2/patches/100-plist-codegen-without-host-tools.patch`，用构建主机的 python3 生成 AirPlay 2 的二进制 plist，不需要 `plistutil` / `xxd`
-- 上游 `plists/get_info_response.xml` 自带一个多余的 `</dict>`，补丁已做兼容
+- 5.6.2 的 `plists/get_info_response.xml` 多一个 `</dict>`，libplist 容忍、python 不容忍，5.6.3 上游已修正；补丁里原先那套“逐个删闭合标签直到能解析”的猜测逻辑已随之移除，解析失败现在直接终止构建
 - `PKG_BUILD_DIR` 需手设为 `$(BUILD_DIR)/shairport-sync-$(PKG_VERSION)`（源码包解压目录名与 `PKG_NAME` 不一致）
 - nqptp 的 init 为 `START=98`（先于 airplay2 的 99）并带 respawn
 - shairport-sync 5.x 无法在 mbed TLS 下构建 `--with-airplay-2`，因此只保留 OpenSSL 单一构建
