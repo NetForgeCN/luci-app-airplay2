@@ -23,8 +23,9 @@ on:
       - ".github/workflows/upstream-check.yml"
 
 permissions:
-  contents: write # 推 chore/upstream-bump 分支
+  contents: write # 推 chore/... 分支
   pull-requests: write # 开 / 更新 PR
+  issues: write # 开 PR 被仓库设置拦住时退化为开 issue
   actions: write # 手动派发 build-packages.yml（GITHUB_TOKEN 推的分支不会自动触发 CI）
 
 concurrency:
@@ -54,10 +55,20 @@ jobs:
         if: steps.check.outputs.changed == 'true' && github.event.inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.check.outputs.branch }}
         run: |
           set -euo pipefail
-          branch="chore/upstream-bump"
+          branch="$BRANCH"
           title="$(head -n1 upstream-report.md | sed 's/^# //')"
+
+          number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            # 分支名带版本号，同名 PR 就意味着“这个版本已经在处理了”。此时不动分支：
+            # 上面可能有人工补的提交（README、补丁、Makefile 注释），force-push 会全丢掉。
+            echo "PR #$number 已存在，只刷新正文，不改分支"
+            gh pr edit "$number" --title "$title" --body-file upstream-report.md
+            exit 0
+          fi
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -67,16 +78,27 @@ jobs:
           git commit -m "$title"
           git push -f origin "$branch"
 
-          number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$number" ]; then
-            gh pr edit "$number" --title "$title" --body-file upstream-report.md
-          else
-            gh pr create --base main --head "$branch" --title "$title" --body-file upstream-report.md
+          if gh pr create --base main --head "$branch" --title "$title" --body-file upstream-report.md; then
+            exit 0
           fi
+
+          # 仓库没勾 “Allow GitHub Actions to create and approve pull requests” 时
+          # gh pr create 会被拒。分支这时已经推上去了，如果就这么失败，等于一条
+          # 静默的“有新版本但没人知道”。退化成开 issue，并把开 PR 的链接写进正文。
+          echo "::warning::开 PR 被拒，改为开 issue。修法：Settings → Actions → General → Workflow permissions 勾选 'Allow GitHub Actions to create and approve pull requests'"
+          {
+            echo "上游有更新，自动分支已经推好，但当前仓库不允许 GitHub Actions 开 PR，所以只能发 issue 通知。"
+            echo ""
+            echo "手动开 PR：<https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1>"
+            echo ""
+            cat upstream-report.md
+          } > issue-body.md
+          gh issue create --title "$title" --body-file issue-body.md
 
       # GITHUB_TOKEN 创建的 push 不会触发其它工作流，所以编译验证要显式派发
       - name: Trigger build on the bump branch
         if: steps.check.outputs.changed == 'true' && github.event.inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run build-packages.yml --ref chore/upstream-bump
+          BRANCH: ${{ steps.check.outputs.branch }}
+        run: gh workflow run build-packages.yml --ref "$BRANCH"
