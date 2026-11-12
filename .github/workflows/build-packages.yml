@@ -81,7 +81,16 @@ jobs:
                    package/luci-app-airplay2/compile V=s -j$(nproc)
 
               echo "=== artifacts ==="
-              find bin/packages -path "*packages_ci*" \( -name "*.apk" -o -name "*.ipk" \) -exec cp -v {} /out/ \;
+              # 两个架构编出来的包同名（airplay2-5.6.3-r1.apk），直接把 /out 一起传上去
+              # 会让后一个上传的覆盖前一个（replacesArtifacts），Release 里就只剩一个架构、
+              # 而且看不出是哪个。所以架构相关的包加 _<arch> 后缀；luci-* 与架构无关，保持原名。
+              while IFS= read -r f; do
+                base="$(basename "$f")"; ext="${base##*.}"; stem="${base%.*}"
+                case "$base" in
+                  luci-*) cp -v "$f" "/out/$base" ;;
+                  *)      cp -v "$f" "/out/${stem}_${ARCH}.${ext}" ;;
+                esac
+              done < <(find bin/packages -path "*packages_ci*" \( -name "*.apk" -o -name "*.ipk" \) -type f)
               ls -la /out
             '
 
