@@ -17,20 +17,7 @@ OpenWrt 上的 AirPlay / AirPlay 2 音频接收器，带 LuCI 界面。
 | `nqptp` | AirPlay 2 时间同步伴侣（1.2.9，smi11） |
 | `luci-app-airplay2` | LuCI 界面（含中文翻译） |
 
-## 分支
-
-| 分支 | 用途 |
-| --- | --- |
-| `main` | 主线，同一份 Makefile 自适应 master 与 24.10/23.05 |
-| `openwrt-24.10` | 24.10 旧版快照（硬编码 `@AUDIO_SUPPORT`），仅用于锁定旧行为 |
-
-## 为什么需要单独的 feed
-
-官方 feed 里没有能直接用的组合：
-
-1. master 的 packages feed 已不含 shairport-sync；自带的 nqptp 是 1.2.4（smi10），与 5.x 要求的 smi11 不兼容，装了也出不了声。
-2. 音频门控换过三代：24.10 是 kconfig 符号 `AUDIO_SUPPORT`，过渡期两者都没有，现在 master 是 `audio-support` / `video-support` 真实包。Makefile 检测代际后自适应，检测不到就不加门控——门控解析失败会让 OpenWrt **静默丢弃整个包**，menuconfig 里连报错都没有。
-3. master 用 apk（`.apk`），24.10 用 opkg（`.ipk`）。
+`main` 分支一份 Makefile 自适应 master 与 24.10/23.05：自动检测音频门控代际（24.10 的 kconfig 符号 `AUDIO_SUPPORT` 与 master 的 `audio-support` / `video-support` 真实包），检测不到就不加门控；master 用 apk（`.apk`），24.10 用 opkg（`.ipk`）。`openwrt-24.10` 分支是 24.10 的独立快照。
 
 ## 安装
 
@@ -57,8 +44,6 @@ make -j$(nproc)
 
 产物：master 在 `bin/packages/<架构>/airplay2/*.apk`，24.10 是 `*.ipk`。
 
-> master 上如果按 `/` 能搜到 `airplay2`、菜单里却看不见，先补 `CONFIG_PACKAGE_video-support=y` 再进 menuconfig，见「排障 · menuconfig」。
-
 ### 方式二：直接放进 package/
 
 ```sh
@@ -68,13 +53,13 @@ cd ..
 make menuconfig && make -j$(nproc)
 ```
 
-`package/` 下的包属于 core 级别，天然优先于所有 feed；但若之前 `feeds install` 过官方 nqptp，先 `./scripts/feeds uninstall nqptp` 清掉同名的那份。
+`package/` 下的包属于 core 级别，天然优先于所有 feed；若之前 `feeds install` 过官方 nqptp，先 `./scripts/feeds uninstall nqptp` 清掉同名的那份。
 
 ### 方式三：用 CI / SDK 编译
 
 `.github/workflows/build-packages.yml` 直接在 `ghcr.io/openwrt/sdk:<arch>-SNAPSHOT` 容器里构建：
 
-- snapshot 镜像**不自带 SDK**，需要先跑镜像里的 `setup.sh` 下载解压
+- snapshot 镜像不自带 SDK，需要先跑镜像里的 `setup.sh` 下载解压
 - `feeds install` 不会改 `.config`，必须显式写入 `CONFIG_PACKAGE_airplay2=y` 等，否则 `make package/xxx/compile` 会静默跳过却报成功
 - 产物是 `.apk`，上传时按目录取，不要写 `*.ipk`
 
@@ -115,7 +100,7 @@ nqptp -V                     # 必须显示 smi11
 ```
 
 - 依赖（libffmpeg、libavahi、libsodium 等）会自动从官方源安装，flash 紧张的小内存设备注意容量（约 3-5 MB）
-- 不要只升 airplay2 而保留旧的 nqptp：smi 版本不匹配时 AirPlay 2 连得上但没声音
+- airplay2 与 nqptp 需成套升级：smi 版本不匹配时 AirPlay 2 连得上但没声音
 
 ## 配置要点（LuCI → 服务 → Airplay 2）
 
@@ -146,7 +131,7 @@ cat /proc/asound/cards
 aplay -l
 ```
 
-先分清“驱动没装”还是“设备没枚举”：
+先分清"驱动没装"还是"设备没枚举"：
 
 ```sh
 find /lib/modules -name 'snd-usb-audio*'
@@ -156,11 +141,11 @@ ls /sys/bus/usb/devices/
 
 | 看到什么 | 判断 |
 | --- | --- |
-| 只有 `usb1`、`usb2`、`2-1`、`2-1:1.0` 这种节点 | 没有外部 USB 设备枚举成功，**不是驱动问题** |
-| `2-1` 且 `idVendor=8087`、`idProduct=8000` | 这是主板内置的 Intel Rate Matching Hub（dmesg 里有 `hub 2-1:1.0: 8 ports detected`），**不是你的音箱**；真实设备是 `2-1.2`、`1-1` 这种带点的子节点 |
+| 只有 `usb1`、`usb2`、`2-1`、`2-1:1.0` 这种节点 | 没有外部 USB 设备枚举成功，不是驱动问题 |
+| `2-1` 且 `idVendor=8087`、`idProduct=8000` | 这是主板内置的 Intel Rate Matching Hub（dmesg 里有 `hub 2-1:1.0: 8 ports detected`），不是你的音箱；真实设备是 `2-1.2`、`1-1` 这种带点的子节点 |
 | 驱动在、设备也在，但还是没有卡 | `modprobe snd-usb-audio`，再看 `dmesg \| tail` |
 
-音箱没枚举时先换口（后置直连主板，别用前置面板/延长线）、换**数据线**——大量“USB 音箱”配的是纯供电线（只有 VBUS/GND），插上永远不枚举。插个 U 盘到同一口可立刻区分是口坏了还是线的问题。若音箱另有 3.5mm 或蓝牙，它的 USB 很可能只供电。
+音箱没枚举时先换口（后置直连主板，别用前置面板/延长线）、换**数据线**——大量"USB 音箱"配的是纯供电线（只有 VBUS/GND），插上永远不枚举。插个 U 盘到同一口可立刻区分是口坏了还是线的问题。若音箱另有 3.5mm 或蓝牙，它的 USB 很可能只供电。
 
 x86 想用机箱后的 3.5mm，还需要 HDA（`kmod-usb-audio` 只管 USB 声卡）：
 
@@ -179,7 +164,7 @@ amixer -c 0 sset Master 80% unmute
 head -c 1000000 /dev/urandom | aplay -D plughw:0 -t raw -f S16_LE -r 48000 -c 2
 ```
 
-`aplay` 打白噪声不需要任何音频文件（OpenWrt 的 `alsa-utils` 不一定带 `speaker-test`）。能听到“沙沙”声，才说明硬件链路通了，这时再去调 airplay2。
+`aplay` 打白噪声不需要任何音频文件（OpenWrt 的 `alsa-utils` 不一定带 `speaker-test`）。能听到"沙沙"声，才说明硬件链路通了，这时再去调 airplay2。
 
 ### 3. 手机连上但声音还在手机里 / 电脑点一下灰掉再恢复
 
@@ -219,8 +204,8 @@ make defconfig
 - 有更新 → 改写 `PKG_VERSION` / `PKG_HASH` / `PKG_RELEASE`，同步本文件里所有写着版本号的地方（顶部版本行、安装命令里的产物名、指向上游 tag 的文档链接），推 `chore/<包>-<版本>` 分支并开 PR，再派发一次 `Build packages` 做编译验证
 - 同一版本再检查一次时分支已存在，只刷新 PR 正文、不动分支，人工补的提交不会被覆盖
 - 没有更新 → 什么都不做，不产生空提交
-- PR 正文会列出两个包的 SMI 版本；不一致时显著提示——这是最容易漏、又必然导致“连得上但没声音”的地方
-- 仓库如果没开 “Allow GitHub Actions to create and approve pull requests”，开 PR 会被拒；这种情况下工作流改为开 issue 通知，并在正文里给出手动开 PR 的链接（不会再出现“分支推上去了但没人知道”）
+- PR 正文会列出两个包的 SMI 版本；不一致时显著提示——这是最容易漏、又必然导致"连得上但没声音"的地方
+- 仓库如果没开 "Allow GitHub Actions to create and approve pull requests"，开 PR 会被拒；这种情况下工作流改为开 issue 通知，并在正文里给出手动开 PR 的链接
 
 逻辑在 `scripts/check_upstream.py`，本地也能跑：
 
@@ -230,16 +215,13 @@ python3 scripts/check_upstream.py               # 直接改 Makefile
 python3 scripts/check_upstream.py nqptp         # 只查某个包
 ```
 
-## 从 4.3.x 升级
+## 构建细节
 
-- shairport-sync 5.0 起配置文件格式有较大变化（多声道、`alac_decoder` 默认改为 ffmpeg 等），见上游 [CONFIGURATIONFILECHANGES5.md](https://github.com/mikebrady/shairport-sync/blob/5.6.3/CONFIGURATIONFILECHANGES5.md)
-- LuCI 的 UCI 选项已逐项核对，在 5.6.3 下仍全部有效
-- 装过旧版 `airplay2-mbedtls` / `airplay2-mini` 的，先卸载再装 `airplay2`
-
-## 构建细节（维护者参考）
-
-- plist 代码生成补丁：`airplay2/patches/100-plist-codegen-without-host-tools.patch`，用构建主机的 python3 生成 AirPlay 2 的二进制 plist，不需要 `plistutil` / `xxd`
-- 5.6.2 的 `plists/get_info_response.xml` 多一个 `</dict>`，libplist 容忍、python 不容忍，5.6.3 上游已修正；补丁里原先那套“逐个删闭合标签直到能解析”的猜测逻辑已随之移除，解析失败现在直接终止构建
+- plist 代码生成补丁：`airplay2/patches/100-plist-codegen-without-host-tools.patch`，用构建主机的 python3 生成 AirPlay 2 的二进制 plist，不需要 `plistutil` / `xxd`；解析失败直接终止构建
 - `PKG_BUILD_DIR` 需手设为 `$(BUILD_DIR)/shairport-sync-$(PKG_VERSION)`（源码包解压目录名与 `PKG_NAME` 不一致）
 - nqptp 的 init 为 `START=98`（先于 airplay2 的 99）并带 respawn
 - shairport-sync 5.x 无法在 mbed TLS 下构建 `--with-airplay-2`，因此只保留 OpenSSL 单一构建
+
+## 许可
+
+GPL-3.0，见 [LICENSE](LICENSE)。shairport-sync 与 nqptp 按各自上游许可证分发。
