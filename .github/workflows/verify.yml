@@ -1,0 +1,42 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Python syntax
+        run: python3 -m py_compile scripts/check_upstream.py
+
+      - name: Shell syntax
+        run: |
+          for f in airplay2/files/airplay2.init \
+                   luci-app-airplay2/root/etc/uci-defaults/luci-airplay2; do
+            sh -n "$f"
+          done
+
+      - name: JavaScript syntax
+        run: node --check luci-app-airplay2/htdocs/luci-static/resources/view/airplay2.js
+
+      - name: JSON fixtures
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          for p in pathlib.Path('.').glob('**/*.json'):
+              if '.git' in p.parts:
+                  continue
+              json.loads(p.read_text(encoding='utf-8'))
+          PY
+
+      - name: Workflow YAML
+        run: ruby -ryaml -e 'Dir[".github/workflows/*.yml"].sort.each { |f| YAML.load_file(f) }'

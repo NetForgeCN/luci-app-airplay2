@@ -6,11 +6,8 @@ on:
       - v*
   pull_request:
   workflow_dispatch:
-    inputs:
-      arch:
-        description: "Limit to one architecture (empty = all)"
-        required: false
-        default: ""
+    # The old, unused `arch` input was removed: it was never wired into the
+    # matrix and only suggested a filtering feature that did not exist.
 
 jobs:
   build:
@@ -18,8 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
-      # needed by ncipollo/release-action when publishing a release on tags
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -32,20 +28,25 @@ jobs:
           - arch: aarch64_generic
             sdk: SNAPSHOT
             publish: true
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Build in SDK container
+        id: build
+        env:
+          # Values reach the shell through the environment, never through a
+          # ${{ ... }} expression pasted into the run: script body.
+          ARCH: ${{ matrix.arch }}
+          SDK: ${{ matrix.sdk }}
         run: |
           mkdir -p out && chmod 777 out
           docker run --rm --entrypoint bash \
             -v "$PWD:/feed" \
             -v "$PWD/out:/out" \
-            -e "ARCH=${{ matrix.arch }}" \
-            "ghcr.io/openwrt/sdk:${{ matrix.arch }}-${{ matrix.sdk }}" -c '
+            -e "ARCH=$ARCH" \
+            "ghcr.io/openwrt/sdk:${ARCH}-${SDK}" -c '
               set -eo pipefail
               mkdir -p /out
 
@@ -95,7 +96,7 @@ jobs:
             '
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.arch }}-${{ matrix.sdk }}
           path: out/*
@@ -103,7 +104,9 @@ jobs:
 
       - name: Upload packages
         if: startsWith(github.ref, 'refs/tags/') && matrix.publish
-        uses: ncipollo/release-action@v1
+        permissions:
+          contents: write # release-action needs write access on tag builds only
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           name: ${{ github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -25,10 +25,17 @@ import tarfile
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 REPORT = ROOT / "upstream-report.md"
+
+# Bound every network fetch and every local extraction. An upstream tarball is
+# untrusted input: a multi-gigabyte response or a symlink in the archive must
+# not be able to fill the CI disk or overwrite files outside the temp dir.
+MAX_DOWNLOAD = 128 * 1024 * 1024
+GIT_TIMEOUT = 120
 
 # 想再纳管别的上游包，加一行即可
 PACKAGES = {
@@ -41,7 +48,10 @@ SMI_RE = re.compile(r"#define\s+NQPTP_SHM_STRUCTURES_VERSION\s+(\d+)")
 
 
 def run(cmd: list[str]) -> str:
-    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+    return subprocess.run(
+        cmd, check=True, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT,
+    ).stdout
 
 
 def version_key(tag: str) -> tuple[int, ...]:
@@ -53,7 +63,8 @@ def retry(fn, attempts: int = 3, delay: float = 2.0):
     for i in range(attempts):
         try:
             return fn()
-        except (subprocess.CalledProcessError, OSError, urllib.error.URLError) as exc:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                OSError, RuntimeError, urllib.error.URLError) as exc:
             if i + 1 == attempts:
                 raise
             print(f"  ...失败（{exc}），{delay * (i + 1):.0f}s 后重试", file=sys.stderr)
@@ -72,11 +83,21 @@ def latest_tag(repo: str) -> str:
 
 def fetch_tarball(repo: str, tag: str) -> bytes:
     url = f"https://codeload.github.com/{repo}/tar.gz/{tag}"
+    expected = urllib.parse.urlsplit(url)
     req = urllib.request.Request(url, headers={"User-Agent": "openwrt-airplay2-updater"})
 
     def download() -> bytes:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return resp.read()
+        with urllib.request.urlopen(req, timeout=GIT_TIMEOUT) as resp:
+            actual = urllib.parse.urlsplit(resp.geturl())
+            if (actual.scheme, actual.netloc) != (expected.scheme, expected.netloc):
+                raise RuntimeError(f"unexpected redirect to {resp.geturl()}")
+            length = resp.headers.get("Content-Length")
+            if length is not None and int(length) > MAX_DOWNLOAD:
+                raise RuntimeError("tarball is too large")
+            data = resp.read(MAX_DOWNLOAD + 1)
+            if len(data) > MAX_DOWNLOAD:
+                raise RuntimeError("tarball is too large")
+            return data
 
     return retry(download)
 
@@ -90,7 +111,7 @@ def nqptp_shm_version(tarball: bytes) -> int | None:
     try:
         with tarfile.open(fileobj=io.BytesIO(tarball), mode="r:gz") as tar:
             for member in tar.getmembers():
-                if member.name.endswith("nqptp-shm-structures.h"):
+                if member.name.endswith("nqptp-shm-structures.h") and member.isfile():
                     fh = tar.extractfile(member)
                     if fh:
                         m = SMI_RE.search(fh.read().decode("utf-8", "replace"))
@@ -99,6 +120,31 @@ def nqptp_shm_version(tarball: bytes) -> int | None:
     except (tarfile.TarError, OSError):
         return None
     return None
+
+
+def safe_extract(tar: tarfile.TarFile, dest: str) -> None:
+    """Extract only regular files/dirs that stay inside *dest*.
+
+    Do not rely on tarfile's ``filter=`` argument: it was added in Python
+    3.11.4 and silently disappearing on older interpreters used to leave an
+    unsafe ``extractall()`` fallback. Reject links, devices, absolute paths,
+    parent traversal and setuid bits before extracting anything at all.
+    """
+    root = pathlib.Path(dest).resolve()
+    members = tar.getmembers()
+    for member in members:
+        name = member.name
+        parts = pathlib.PurePosixPath(name).parts
+        if not name or name.startswith("/") or ".." in parts:
+            raise RuntimeError(f"unsafe archive path: {name!r}")
+        if not (member.isfile() or member.isdir()):
+            raise RuntimeError(f"unsupported archive member type: {name!r}")
+        if member.mode & 0o7000:
+            raise RuntimeError(f"archive member has special mode bits: {name!r}")
+        target = (root / name).resolve()
+        if target != root and root not in target.parents:
+            raise RuntimeError(f"archive path escapes extraction root: {name!r}")
+    tar.extractall(dest, members=members)
 
 
 def check_patches(tarball: bytes, patch_dir: pathlib.Path) -> tuple[int, list[tuple[str, str]]]:
@@ -112,11 +158,12 @@ def check_patches(tarball: bytes, patch_dir: pathlib.Path) -> tuple[int, list[tu
         return 0, []
 
     with tempfile.TemporaryDirectory() as tmp:
-        with tarfile.open(fileobj=io.BytesIO(tarball), mode="r:gz") as tar:
-            try:
-                tar.extractall(tmp, filter="data")
-            except TypeError:  # python < 3.11.4 没有 filter 参数
-                tar.extractall(tmp)
+        try:
+            with tarfile.open(fileobj=io.BytesIO(tarball), mode="r:gz") as tar:
+                safe_extract(tar, tmp)
+        except (tarfile.TarError, OSError, RuntimeError, ValueError) as exc:
+            return len(patches), [(p.name, f"无法安全解压源码包: {exc}") for p in patches]
+
         roots = [p for p in pathlib.Path(tmp).iterdir() if p.is_dir()]
         if not roots:
             return len(patches), [(p.name, "源码包里没有目录") for p in patches]
@@ -134,6 +181,8 @@ def check_patches(tarball: bytes, patch_dir: pathlib.Path) -> tuple[int, list[tu
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=120,
                 )
             except subprocess.TimeoutExpired:
@@ -146,7 +195,7 @@ def check_patches(tarball: bytes, patch_dir: pathlib.Path) -> tuple[int, list[tu
 
 
 def current_version(makefile: pathlib.Path) -> str:
-    m = re.search(r"^PKG_VERSION:=(.+)$", makefile.read_text(), re.M)
+    m = re.search(r"^PKG_VERSION:=(.+)$", makefile.read_text(encoding="utf-8"), re.M)
     if not m:
         raise SystemExit(f"{makefile} 里没有 PKG_VERSION")
     return m.group(1).strip()
@@ -169,7 +218,7 @@ def sync_readme(readme: pathlib.Path, versions: dict[str, str]) -> bool:
     """
     if not readme.exists():
         return False
-    text = original = readme.read_text()
+    text = original = readme.read_text(encoding="utf-8")
 
     ap2 = versions.get("airplay2")
     nqptp = versions.get("nqptp")
@@ -201,7 +250,7 @@ def sync_readme(readme: pathlib.Path, versions: dict[str, str]) -> bool:
         text = re.sub(r"nqptp_\d+(?:\.\d+)+-r\d+", f"nqptp_{nqptp}-r1", text)
 
     if text != original:
-        readme.write_text(text)
+        readme.write_text(text, encoding="utf-8")
         return True
     return False
 
@@ -245,8 +294,8 @@ def main() -> int:
         print(f"[{name}] {old} -> {new}  sha256={digest}  smi={row['smi']}")
 
         if not args.dry_run:
-            text = makefile.read_text()
-            makefile.write_text(rewrite_makefile(text, new, digest))
+            text = makefile.read_text(encoding="utf-8")
+            makefile.write_text(rewrite_makefile(text, new, digest), encoding="utf-8")
 
     if not changed:
         REPORT.unlink(missing_ok=True)
@@ -343,7 +392,7 @@ def main() -> int:
     if args.dry_run:
         print("\n".join(lines))
     else:
-        REPORT.write_text("\n".join(lines) + "\n")
+        REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"wrote {REPORT}")
 
     _set_output("changed", "true")
@@ -358,9 +407,16 @@ def main() -> int:
 def _set_output(key: str, value: str) -> None:
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
+        # Never allow upstream-derived text to add extra workflow outputs.
+        safe = " ".join(str(value).splitlines()) or str(value)
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(f"{key}={value}\n")
+            fh.write(f"{key}={safe}\n")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (RuntimeError, OSError, subprocess.SubprocessError,
+            urllib.error.URLError) as exc:
+        print(f"check_upstream: FAILED: {exc}", file=sys.stderr)
+        sys.exit(1)

@@ -22,11 +22,9 @@ on:
       - "scripts/check_upstream.py"
       - ".github/workflows/upstream-check.yml"
 
+# Least privilege: only the job that actually needs write tokens gets them.
 permissions:
-  contents: write # 推 chore/... 分支
-  pull-requests: write # 开 / 更新 PR
-  issues: write # 开 PR 被仓库设置拦住时退化为开 issue
-  actions: write # 手动派发 build-packages.yml（GITHUB_TOKEN 推的分支不会自动触发 CI）
+  contents: read
 
 concurrency:
   group: upstream-check
@@ -37,15 +35,36 @@ jobs:
     name: Check upstream releases
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write # 推 chore/... 分支
+      pull-requests: write # 开 / 更新 PR
+      issues: write # 开 PR 被仓库设置拦住时退化为开 issue
+      actions: write # 手动派发 build-packages.yml（GITHUB_TOKEN 推的分支不会自动触发 CI）
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - name: Look for new upstream releases
+      # github.event.inputs.* 是不可信输入：先经过 env，再按白名单校验，最后才
+      # 作为参数传给脚本。绝不能把表达式直接拼进 run: 的 shell 源码里。
+      - name: Validate and look for new upstream releases
         id: check
-        run: python3 scripts/check_upstream.py ${{ github.event.inputs.packages }}
+        env:
+          PACKAGES: ${{ github.event.inputs.packages || '' }}
+        run: |
+          set -euo pipefail
+          case "$PACKAGES" in
+            *[!A-Za-z0-9_' ']*)
+              echo "::error::packages input contains unsupported characters" >&2
+              exit 1
+              ;;
+          esac
+          targets=()
+          if [ -n "$PACKAGES" ]; then
+            read -r -a targets <<< "$PACKAGES"
+          fi
+          python3 scripts/check_upstream.py "${targets[@]}"
 
       - name: Show report
         if: steps.check.outputs.changed == 'true'

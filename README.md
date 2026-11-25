@@ -62,6 +62,7 @@ make menuconfig && make -j$(nproc)
 - snapshot 镜像不自带 SDK，需要先跑镜像里的 `setup.sh` 下载解压
 - `feeds install` 不会改 `.config`，必须显式写入 `CONFIG_PACKAGE_airplay2=y` 等，否则 `make package/xxx/compile` 会静默跳过却报成功
 - 产物是 `.apk`，上传时按目录取，不要写 `*.ipk`
+- `.github/workflows/verify.yml` 在 push / PR 上跑 Python、shell、JS 语法与 JSON/YAML 解析；rpcd ACL 只放行精确的 `/proc/asound/cards` 读取和 `bluealsa-aplay -l` 命令行，不给整个可执行文件的裸 `exec`
 
 ## 在已装好的设备上安装
 
